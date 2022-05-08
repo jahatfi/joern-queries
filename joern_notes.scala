@@ -31,9 +31,9 @@ sink.reachableByFlows(src).p
 
 // Find the second path in layers.c
 // The line below creates a query to find all the first arguments passed TO source_3
-val src = cpg.call.name("source_3").argument.order(1).isArgument
+def src = cpg.call.name("source_3").argument.order(1).isArgument
 // The line below creates a query to find all aruments passed TO system
-val sink = cpg.call.name("system")
+def sink = cpg.call.name("system")
 // Are any sinks reachable by sources?
 sink.reachableByFlows(src).p
 
@@ -69,7 +69,8 @@ def getPath2(   function_that_taints_param_ptr:String,
 // I want to programatically find all functions that taint parameter pointers
 // TODO Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
 // TODO Return a dictionary of function names to tainted indices, e.g. {source_3:0}
-def getFunctionsThatTaintParamPointers:String = {
+def getFunctionsThatTaintParamPointers:overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
+    println("Hello")
     val taintFirstIndex = "gets"
     def candidateMethods = {cpg.method.name(taintFirstIndex).caller}
     def filteredMethods = {candidateMethods.filter(
@@ -77,11 +78,48 @@ def getFunctionsThatTaintParamPointers:String = {
             val sink = cpg.method.ast.isCallTo(taintFirstIndex).argument(1)
             sink.reachableBy(method.parameter)        
         }.size > 0
-    ).name.head}
-    return filteredMethods
+    )}.l
+    def taintedIndices{
+        //Iterate over all args to this function,
+        // checking which one(s) are tainted
+        filteredMethods.foreach{
+            cpg.call.name(taintFirstIndex).head.argument.filter{
+                argument => {
+                    val src = cpg.method.ast.isCallTo(taintFirstIndex).argument(1)
+                    src.reachableBy(argument)        
+                }.size > 0            
+            }.l
+        }
+    }
+    return taintedIndices
 }
-getPath2(getFunctionsThatTaintParamPointers, "gets", "system") 
 
+getPath2(getFunctionsThatTaintParamPointers, "gets", "system") +
+
+val sources = Map("recv" -> 1) //"gets" -> 0, 
+// I want to programatically find all functions that taint parameter pointers
+// TODO Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
+// TODO Return a dictionary of function names to tainted indices, e.g. {source_3:0}
+def getFunctionsThatTaintParamPointers(sourceDict: Map[String, Int]):String = { //overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
+    val desiredMethods = List()
+    def candidateMethods = {
+        for ((source,taintedIndex) <- sourceDict){
+            println("Source: "+source)
+            def candidateMethods = {cpg.method.name(source).caller}
+            def filteredMethods = {candidateMethods.filter(
+                method => {
+                    val sink = cpg.method.ast.isCallTo(source).argument(taintedIndex)
+                    sink.reachableBy(method.parameter)        
+                }.size > 0  
+            ).name.head}
+            desiredMethods :+ filteredMethods
+        }   
+    }
+    println(desiredMethods)
+    return desiredMethods
+}
+getFunctionsThatTaintParamPointers(sources)
+getPath2(getFunctionsThatTaintParamPointers, "gets", "system") 
 
 // This scala method will find functions that 
 // receive an argument affected by gets() and 

@@ -69,8 +69,7 @@ def getPath2(   function_that_taints_param_ptr:String,
 // I want to programatically find all functions that taint parameter pointers
 // TODO Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
 // TODO Return a dictionary of function names to tainted indices, e.g. {source_3:0}
-def getFunctionsThatTaintParamPointers:overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
-    println("Hello")
+def getFunctionsThatTaintParamPointers:Map[String,List[Int]]={//overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
     val taintFirstIndex = "gets"
     def candidateMethods = {cpg.method.name(taintFirstIndex).caller}
     def filteredMethods = {candidateMethods.filter(
@@ -78,23 +77,20 @@ def getFunctionsThatTaintParamPointers:overflowdb.traversal.Traversal[io.shiftle
             val sink = cpg.method.ast.isCallTo(taintFirstIndex).argument(1)
             sink.reachableBy(method.parameter)        
         }.size > 0
-    )}.l
-    def taintedIndices{
-        //Iterate over all args to this function,
-        // checking which one(s) are tainted
-        filteredMethods.foreach{
-            cpg.call.name(taintFirstIndex).head.argument.filter{
-                argument => {
-                    val src = cpg.method.ast.isCallTo(taintFirstIndex).argument(1)
-                    src.reachableBy(argument)        
-                }.size > 0            
-            }.l
+    )}
+    /*
+    def finalMethods = {filteredMethods.filter(
+        method => {
+
         }
-    }
-    return taintedIndices
+    )}
+    */
+    var result:Map[String,List[Int]] = Map()
+    result += ("source_3" -> List(1,2))
+    return result
 }
 
-getPath2(getFunctionsThatTaintParamPointers, "gets", "system") +
+getPath2(getFunctionsThatTaintParamPointers, "gets", "system")
 
 val sources = Map("recv" -> 1) //"gets" -> 0, 
 // I want to programatically find all functions that taint parameter pointers

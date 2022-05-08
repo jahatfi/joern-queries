@@ -67,10 +67,47 @@ def getPath2(   function_that_taints_param_ptr:String,
 }
 
 // I want to programatically find all functions that taint parameter pointers
-// TODO Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
-// TODO Return a dictionary of function names to tainted indices, e.g. {source_3:0}
-def getFunctionsThatTaintParamPointers:Map[String,List[Int]]={//overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
-    val taintFirstIndex = "gets"
+// DONE (ish) Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
+// DONE Return a dictionary of function names to tainted indices, e.g. {source_3:0}
+import scala.collection.mutable.ListBuffer 
+def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[String,List[Int]]={//overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
+    var sources:Map[String,List[Int]] = Map()
+    sources += ("gets" -> List(1))
+    sources += ("fgets" -> List(1))
+    sources += ("recv" -> List(2))   
+    sources += ("recvfrom" -> List(2))     
+    sources += ("read" -> List(2))
+
+    println("Hello, here's my sources", sources)
+    // Save results in earlyResults
+    var earlyResults:ListBuffer[(String, String, Int)] = ListBuffer()
+     
+    // Iterate over each sink, then each (possibly) tainted parameter
+    for ((source, tainted_params) <- sources){
+        def candidateMethods = {cpg.method.name(source).caller}   
+        // Iterate over each (possibly) tainted parameter
+        for (tainted_param <- tainted_params){
+            println("Looking at source" , source, "tainted param ", tainted_param)
+
+            // E.g. "gets", 1
+            def filteredMethods = {candidateMethods.filter(
+                method => {
+                    val sink = cpg.method.ast.isCallTo(source).argument(tainted_param)
+                    sink.reachableBy(method.parameter)        
+                }.size > 0
+            )}.name    
+            var r = filteredMethods.l
+            println("Filtered method is ", r)
+            if(r.length >= 1){
+                earlyResults += ((filteredMethods.head, source, tainted_param))
+
+            }
+        }
+    }
+    return earlyResults
+}
+
+
     def candidateMethods = {cpg.method.name(taintFirstIndex).caller}
     def filteredMethods = {candidateMethods.filter(
         method => {

@@ -128,7 +128,7 @@ void source_3(char *source_3_buff, int len){
     gets(source_3_buff);
 }
 
-void source_4(char *buff_to_taint, int n){
+void source_4(int n, char *buff_to_taint){
     socketfd = socket(AF_INET, SOCK_STREAM, 0);
     // Would normally bind and open socket or some such steps, but
     // skipping for simplicity
@@ -340,7 +340,7 @@ void main (int argc, char * argv[]){
 
     // Path #3
     char buff4[len];
-    source_4(buff4, len);
+    source_4(len, buff4);
     system(buff_to_taint);
 
     printf("The global int is %d\n", global_int);

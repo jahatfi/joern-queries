@@ -37,6 +37,12 @@ def sink = cpg.call.name("system")
 // Are any sinks reachable by sources?
 sink.reachableByFlows(src).p
 
+// Assuming there's only one call to fscanf, get the number of arguments to fscanf in that call:
+cpg.method.name(".*fscanf").caller.call.name(".*fscanf").argument.l.length
+
+// Get the maximum number of arguments ever provided to a variadic function
+val x = cpg.call.name(".*printf").argument.l.groupBy(x => x.lineNumber).l.maxBy(x=>x._2.length)._2.length
+
 // Rewrite the above more generically:
 
 // Enter the function below, then try this:
@@ -70,6 +76,7 @@ def getPath2(   function_that_taints_param_ptr:String,
 // DONE (ish) Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
 // DONE Return a dictionary of function names to tainted indices, e.g. {source_3:0}
 import scala.collection.mutable.ListBuffer 
+import scala.util.control.Breaks._
 def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[String,List[Int]]={//overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
     var sources:Map[String,List[Int]] = Map()
     sources += ("gets" -> List(1))
@@ -77,30 +84,70 @@ def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[
     sources += ("recv" -> List(2))   
     sources += ("recvfrom" -> List(2))     
     sources += ("read" -> List(2))
+    sources += ("main" -> List(1,2))
+    val variadicFunctions:List[String] = List("__isoc99_fscanf", ".*fscanf", "__isoc99_scanf", "scanf", "__isoc99_sscanf", "sscanf")
+    // TODO Variadic functions
+    // NOTE: Some function names are changes in preprocessing, e.g. 
+    // "fscanf" becomes "__isoc99_fscanf"
+    /*
+        g_sources = {
+        "fgets": 0,
+        "fscanf": range(1,1000),
+        "gets": 0,
+        "main": range(2),
+        "read": 1,
+        "recv": 1,
+        "recvfrom": 1,
+        "scanf": range(1000),
+        "sscanf": range(1,1000),
+    }
+    */
+    sources += (".*fscanf" -> Range(3,10).l)
+    sources += (".*_sscanf" -> Range(3,10).l)
+    sources += (".*_scanf" -> Range(2,10).l)
 
     println("Hello, here's my sources", sources)
+    println("Hello, here's my variadics", variadicFunctions)
+
     // Save results in earlyResults
     var earlyResults:ListBuffer[(String, String, Int)] = ListBuffer()
      
-    // Iterate over each sink, then each (possibly) tainted parameter
+    // Iterate over each source, then each (possibly) tainted parameter
     for ((source, tainted_params) <- sources){
-        def candidateMethods = {cpg.method.name(source).caller}   
-        // Iterate over each (possibly) tainted parameter
-        for (tainted_param <- tainted_params){
-            println("Looking at source" , source, "tainted param ", tainted_param)
+        breakable{
+            if(cpg.call.name(source).l.length==0){
+                println(source+" not found, skipping.")
+                break
+            } 
+            def candidateMethods = {cpg.method.name(source).caller}  
+            var maxNumberOfArguments = 1000
+            if(variadicFunctions.contains(source)){
+                maxNumberOfArguments = cpg.call.name(source).argument.l.groupBy(x => x.lineNumber).l.maxBy(x=>x._2.length)._2.length 
+            }
+            
+            // Iterate over each (possibly) tainted parameter
+            breakable{
+                for (tainted_param <- tainted_params){
+                    if(maxNumberOfArguments < tainted_param){
+                        println("Was about to examine variadic source: " + source +" but no more args to check after #" + tainted_param)
+                        break
+                    }
 
-            // E.g. "gets", 1
-            def filteredMethods = {candidateMethods.filter(
-                method => {
-                    val sink = cpg.method.ast.isCallTo(source).argument(tainted_param)
-                    sink.reachableBy(method.parameter)        
-                }.size > 0
-            )}.name    
-            var r = filteredMethods.l
-            println("Filtered method is ", r)
-            if(r.length >= 1){
-                earlyResults += ((filteredMethods.head, source, tainted_param))
+                    println("Looking at source " + source + ", tainted param #"+ tainted_param)
 
+                    // E.g. "gets", 1
+                    def filteredMethods = {candidateMethods.filter(
+                        method => {
+                            val sink = cpg.method.ast.isCallTo(source).argument(tainted_param)
+                            sink.reachableBy(method.parameter)        
+                        }.size > 0
+                    )}.name    
+                    var r = filteredMethods.l
+                    if(r.length >= 1){
+                        println("Filtered method is " + r)
+                        earlyResults += ((filteredMethods.head, source, tainted_param))
+                    }
+                }
             }
         }
     }

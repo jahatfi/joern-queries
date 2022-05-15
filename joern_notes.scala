@@ -16,6 +16,12 @@ run.ossdataflow
 // Also 
 def source = cpg.method.name(".*alloc.*").parameter  cpg.method.fullName("main").parameter
 
+// Assuming there's only one call to fscanf, get the number of arguments to fscanf in that call:
+cpg.method.name(".*fscanf").caller.call.name(".*fscanf").argument.l.length
+
+// Get the maximum number of arguments ever provided to a variadic function
+val x = cpg.call.name(".*printf").argument.l.groupBy(x => x.lineNumber).l.maxBy(x=>x._2.length)._2.length
+
 //TODO Find tainted pointers
 // First, find arguments that are tainted,
 // TODO, find the variables they correspond to in the caller
@@ -23,9 +29,9 @@ cpg.call.name("gets").argument.order(1).isArgument
 
 // Find the first path in layers.c
 // The line below creates a query to find all arguments passed TO gets
-val src = cpg.call.name("gets")
+def src = cpg.call.name("gets")
 // The line below creates a query to find all aruments passed TO system
-val sink = cpg.call.name("system")
+def sink = cpg.call.name("system")
 // Are any sinks reachable by sources?
 sink.reachableByFlows(src).p
 
@@ -37,21 +43,13 @@ def sink = cpg.call.name("system")
 // Are any sinks reachable by sources?
 sink.reachableByFlows(src).p
 
-// Assuming there's only one call to fscanf, get the number of arguments to fscanf in that call:
-cpg.method.name(".*fscanf").caller.call.name(".*fscanf").argument.l.length
-
-// Get the maximum number of arguments ever provided to a variadic function
-val x = cpg.call.name(".*printf").argument.l.groupBy(x => x.lineNumber).l.maxBy(x=>x._2.length)._2.length
-
 // Rewrite the above more generically:
 
-// Enter the function below, then try this:
-// getPath2("source_3", "gets", "system") 
 // Only the first arg requires more analysis to find.
 // The other two are well known from the language
-def getPath2(   function_that_taints_param_ptr:String, 
-                source_that_taints_first_arg:String,
-                sink_first_arg:String) = {
+def getSinglePath(function_that_taints_param_ptr:String, 
+            source_that_taints_first_arg:String,
+            sink_first_arg:String) = {
     //val function_that_taints_param_ptr = "source_3"
     val src3_params = cpg.method.name(function_that_taints_param_ptr).parameter
     val filteredParams = src3_params.filter(
@@ -71,6 +69,30 @@ def getPath2(   function_that_taints_param_ptr:String,
     val sink = cpg.call.name(sink_first_arg)
     sink.reachableByFlows(src).p
 }
+// Enter the function above, then try this:
+getSinglePath("source_3", "gets", "system") 
+
+// Can we further rewrite the function above completely generically?
+// TODO Note: this only works for sources that taint param pointers.
+// Fix or create new functions to handle tainted returned pointers
+import scala.collection.mutable.ListBuffer 
+def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[List[String]] = {
+    val results:ListBuffer[List[String]] = ListBuffer()
+    for((caller, source, tainted_index) <- sources){
+        for((sink, sink_index) <- sinks){
+            print("Checking " + caller + "->" + sink+"\n")
+            val this_src = cpg.call.name(caller).argument.order(tainted_index)
+            val this_sink = cpg.call.name(sink).argument.order(sink_index)
+            val paths = this_sink.reachableByFlows(this_src).p
+            //println(paths)
+            if(paths.length > 0){
+               results += paths
+            }
+        }
+    }
+    return results
+}
+
 
 // I want to programatically find all functions that taint parameter pointers
 // DONE (ish) Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
@@ -86,22 +108,7 @@ def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[
     sources += ("read" -> List(2))
     sources += ("main" -> List(1,2))
     val variadicFunctions:List[String] = List("__isoc99_fscanf", ".*fscanf", "__isoc99_scanf", "scanf", "__isoc99_sscanf", "sscanf")
-    // TODO Variadic functions
-    // NOTE: Some function names are changes in preprocessing, e.g. 
-    // "fscanf" becomes "__isoc99_fscanf"
-    /*
-        g_sources = {
-        "fgets": 0,
-        "fscanf": range(1,1000),
-        "gets": 0,
-        "main": range(2),
-        "read": 1,
-        "recv": 1,
-        "recvfrom": 1,
-        "scanf": range(1000),
-        "sscanf": range(1,1000),
-    }
-    */
+
     sources += (".*fscanf" -> Range(3,10).l)
     sources += (".*_sscanf" -> Range(3,10).l)
     sources += (".*_scanf" -> Range(2,10).l)
@@ -115,7 +122,7 @@ def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[
     // Iterate over each source, then each (possibly) tainted parameter
     for ((source, tainted_params) <- sources){
         breakable{
-            if(cpg.call.name(source).l.length==0){
+            if(source != "main" && cpg.call.name(source).l.length==0){
                 println(source+" not found, skipping.")
                 break
             } 
@@ -154,52 +161,11 @@ def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[
     return earlyResults
 }
 
+getFunctionsThatTaintParamPointers
+val my_sources = getSinglePath(getFunctionsThatTaintParamPointers.head._1, "gets", "system") 
+val my_sinks = List(("system",1), )
+getAllPaths(my_sources, my_sinks)
 
-    def candidateMethods = {cpg.method.name(taintFirstIndex).caller}
-    def filteredMethods = {candidateMethods.filter(
-        method => {
-            val sink = cpg.method.ast.isCallTo(taintFirstIndex).argument(1)
-            sink.reachableBy(method.parameter)        
-        }.size > 0
-    )}
-    /*
-    def finalMethods = {filteredMethods.filter(
-        method => {
-
-        }
-    )}
-    */
-    var result:Map[String,List[Int]] = Map()
-    result += ("source_3" -> List(1,2))
-    return result
-}
-
-getPath2(getFunctionsThatTaintParamPointers, "gets", "system")
-
-val sources = Map("recv" -> 1) //"gets" -> 0, 
-// I want to programatically find all functions that taint parameter pointers
-// TODO Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
-// TODO Return a dictionary of function names to tainted indices, e.g. {source_3:0}
-def getFunctionsThatTaintParamPointers(sourceDict: Map[String, Int]):String = { //overflowdb.traversal.Traversal[io.shiftleft.codepropertygraph.generated.nodes.Method] = {
-    val desiredMethods = List()
-    def candidateMethods = {
-        for ((source,taintedIndex) <- sourceDict){
-            println("Source: "+source)
-            def candidateMethods = {cpg.method.name(source).caller}
-            def filteredMethods = {candidateMethods.filter(
-                method => {
-                    val sink = cpg.method.ast.isCallTo(source).argument(taintedIndex)
-                    sink.reachableBy(method.parameter)        
-                }.size > 0  
-            ).name.head}
-            desiredMethods :+ filteredMethods
-        }   
-    }
-    println(desiredMethods)
-    return desiredMethods
-}
-getFunctionsThatTaintParamPointers(sources)
-getPath2(getFunctionsThatTaintParamPointers, "gets", "system") 
 
 // This scala method will find functions that 
 // receive an argument affected by gets() and 
@@ -252,3 +218,11 @@ def getFlow2() = {
 
     filteredSinkPMethods.reachableByFlows(filteredSrcPMethods).p
 }
+
+// https://blog.cys4.com/exploit/reverse-engineering/2022/04/18/From-Patch-To-Exploit_CVE-2021-35029.html
+// def sink_exec = cpg.method.name(".*exec.*").callIn.argument // all the arguments
+// def sink_popen = cpg.method.name("popen").callIn.argument(1) // restrict to argument 1
+// def sink_system = cpg.method.name("system").callIn.argument(1) // restrict to argument 1
+// sink_exec.reachableByFlows(src).map( _.elements.map( n => (n.lineNumber.get,n.astParent.code) )).l
+
+

@@ -44,7 +44,7 @@ void readme(int a){
 }
 
 //Begin source functions
-char
+char *
 source_1 (){
     /* A test */ /*Another test */ /*Another test */     /* A test */ /*Another test */ /*Another test */
 
@@ -84,7 +84,7 @@ source_1 (){
    }
    if(e > 0) layer_1_b(flag, buff, c, myDouble);
    layer_1_c(buff, e);
-   return buff[0];
+   return buff;
 }
 //Testing conditional compilation
 #define CONCOM

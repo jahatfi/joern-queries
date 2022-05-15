@@ -341,7 +341,12 @@ void main (int argc, char * argv[]){
     // Path #3
     char buff4[len];
     source_4(len, buff4);
-    system(buff_to_taint);
+    system(buff4);
+
+    // Path #4 is simply the next 3 lines
+    char * buff3 = return_tainted_buff();
+    sink_1(buff3);
+    free(buff3);    
 
     printf("The global int is %d\n", global_int);
     int i;
@@ -367,7 +372,8 @@ void main (int argc, char * argv[]){
     }
 
     printf("Testing...\n");
-    source_1();
+    char *tainted_source_1_buff = source_1();
+    free(tainted_source_1_buff);
     //source_2(1);
     (*source_2)(1);  //SIFT appears to work with function pointers
     source_3(buff, len);

@@ -80,11 +80,12 @@ def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,In
     val results:ListBuffer[List[String]] = ListBuffer()
     for((caller, source, tainted_index) <- sources){
         for((sink, sink_index) <- sinks){
-            print("Checking " + caller + "->" + sink+"\n")
+            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
+            // TODO: Fix the fact that this is getting unreachable code :(
             val this_src = cpg.call.name(caller).argument.order(tainted_index)
-            val this_sink = cpg.call.name(sink).argument.order(sink_index)
+            val this_sink = cpg.call.name(sink).l.argument.order(sink_index)
             val paths = this_sink.reachableByFlows(this_src).p
-            //println(paths)
+            println(paths)
             if(paths.length > 0){
                results += paths
             }
@@ -92,7 +93,9 @@ def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,In
     }
     return results
 }
-
+val my_sources = ListBuffer(("gets", "n/a", 1))
+val my_sinks = List(("system",1))
+getAllPaths(my_sources, my_sinks)
 
 // I want to programatically find all functions that taint parameter pointers
 // DONE (ish) Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
@@ -162,9 +165,13 @@ def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[
 }
 
 getFunctionsThatTaintParamPointers
-val my_sources = getSinglePath(getFunctionsThatTaintParamPointers.head._1, "gets", "system") 
-val my_sinks = List(("system",1), )
-getAllPaths(my_sources, my_sinks)
+//val my_sources = getSinglePath(getFunctionsThatTaintParamPointers.head._1, "gets", "system") 
+val my_sources = getFunctionsThatTaintParamPointers
+my_sources += (("gets", "n/a", 1))
+
+val my_sources = ListBuffer(("gets", "n/a", 1))
+val my_sinks = List(("system",1))
+getAllPaths(getFunctionsThatTaintParamPointers, my_sinks)
 
 
 // This scala method will find functions that 

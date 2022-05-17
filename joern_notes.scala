@@ -34,6 +34,7 @@ def src = cpg.call.name("gets")
 def sink = cpg.call.name("system")
 // Are any sinks reachable by sources?
 sink.reachableByFlows(src).p
+cpg.call.name("system").reachableByFlows(cpg.call.name("gets"))
 
 // Find the second path in layers.c
 // The line below creates a query to find all the first arguments passed TO source_3
@@ -73,26 +74,83 @@ def getSinglePath(function_that_taints_param_ptr:String,
 getSinglePath("source_3", "gets", "system") 
 
 // Can we further rewrite the function above completely generically?
-// TODO Note: this only works for sources that taint param pointers.
-// Fix or create new functions to handle tainted returned pointers
+// Not only does this work for sources that taint parameter pointers,
+// but it ALSO works for functions that tainted returned pointers
 import scala.collection.mutable.ListBuffer 
-def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[List[String]] = {
+def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[String] = {
     val results:ListBuffer[List[String]] = ListBuffer()
     for((caller, source, tainted_index) <- sources){
         for((sink, sink_index) <- sinks){
-            print("Checking " + caller + "->" + sink+"\n")
-            val this_src = cpg.call.name(caller).argument.order(tainted_index)
-            val this_sink = cpg.call.name(sink).argument.order(sink_index)
-            val paths = this_sink.reachableByFlows(this_src).p
-            //println(paths)
+            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
+            // Ideally we'd only need the 3 lines below to trace any path from any source 
+            // to any sink.  This code takes into account the exact parameters that are tainted (my contribution), 
+            // including return values (native to Joern.)
+            // That siad, it yields results with both duplicate lines AND unreachable code.
+            // E.g. When analyzing layers.c,  it yields sink_3() as a
+            // complete source->sink path, yet sink_3 is never called from anywhere!
+            def this_src = cpg.call.name(caller).argument.order(tainted_index)
+            def this_sink = cpg.call.name(sink).l.argument.order(sink_index)
+            def paths = this_sink.reachableByFlows(this_src).p
+
+            // This whole mess below is designed to exclude unreachable code.
+            // The code below does not trace flow paths by specific arguments,
+            // so in that way it's less complete (more false positives related to 
+            // tracing arguments that might not be accurate), yet at the same time 
+            // I found this same approach to avoid dead code (more sound) more so 
+            // than the approach above.
+            def paths2 = cpg.call.name(sink).reachableByFlows(cpg.call.name(caller)).p
+
+            // So now I have two lists of possible paths.
+            // Paths is more specific, but maybe with some false positives.
+            // Start there: we only have more work to do if there's at least one result in paths:
             if(paths.length > 0){
-               results += paths
+                // Per my own convention, if the source is "n/a", it's a regular source function 
+                // (e.g. gets) that Joern can handle natively. Just add paths2 and move on.
+                // TODO Or is it += paths???
+                if(source != "n/a"){
+                    results += paths2
+                    println("Nope")
+                }
+                else{
+                    // This is a function that returns tainted parameters and the 
+                    // requires the complex analysis below.
+                    // First, remove duplicate lines from both paths(2).  
+                    // This is gonna be ugly :(
+                    val dedup_paths2:ListBuffer[String] = ListBuffer()
+                    for(path2 <- paths2){
+                        for(line <- path2.split("\\n")){
+                            if(!dedup_paths2.contains(line.trim() + "\n")){
+                                dedup_paths2 += line.trim() + "\n"
+                            }
+                        }                        
+                    }                        
+                    for(path <- paths){
+                        val dedup_paths:ListBuffer[String] = ListBuffer()
+                        for(line <- path.split("\\n")){
+                            if(!dedup_paths.contains(line.trim() + "\n")){
+                                dedup_paths += line.trim() + "\n"
+                            }
+                        }
+                        // This path in paths has been deduplicated (duplicates removed)
+                        // If the same path exists in paths2 (also deduplicated), I am 
+                        // more confident that this path is NOT a false positive.
+                        // Save it to the results
+                        val new_paths = (dedup_paths intersect dedup_paths2)
+                        results += new_paths.l                 
+                    }
+                }
             }
         }
     }
-    return results
+    val results2:ListBuffer[String] = ListBuffer()
+    for(r <- results){
+        results2 += r.mkString
+    }
+    return results2
 }
-
+val my_sources = ListBuffer(("gets", "n/a", 1))
+val my_sinks = List(("system",1))
+getAllPaths(my_sources, my_sinks)
 
 // I want to programatically find all functions that taint parameter pointers
 // DONE (ish) Pass in a dictionary of function names (e.g. {gets:0} to tainted indices
@@ -162,9 +220,12 @@ def getFunctionsThatTaintParamPointers:ListBuffer[(String, String, Int)]={//Map[
 }
 
 getFunctionsThatTaintParamPointers
-val my_sources = getSinglePath(getFunctionsThatTaintParamPointers.head._1, "gets", "system") 
-val my_sinks = List(("system",1), )
+//val my_sources = getSinglePath(getFunctionsThatTaintParamPointers.head._1, "gets", "system") 
+val my_sources = getFunctionsThatTaintParamPointers
+my_sources += (("gets", "n/a", 1))
+val my_sinks = List(("system",1))
 getAllPaths(my_sources, my_sinks)
+
 
 
 // This scala method will find functions that 

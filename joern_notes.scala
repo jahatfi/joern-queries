@@ -76,6 +76,26 @@ getSinglePath("source_3", "gets", "system")
 // Can we further rewrite the function above completely generically?
 // Not only does this work for sources that taint parameter pointers,
 // but it ALSO works for functions that tainted returned pointers
+// Note that this yields false positives.  A more accurate version is presented much later in this document
+// but this shows the general idea without the complexity required to avoid unreachable code.
+def getAllPathsv1(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[List[String]] = {
+    val results:ListBuffer[List[String]] = ListBuffer()
+    for((caller, source, tainted_index) <- sources){
+        for((sink, sink_index) <- sinks){
+            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
+            // TODO: Fix the fact that this is getting unreachable code :(
+            val this_src = cpg.call.name(caller).argument.order(tainted_index)
+            val this_sink = cpg.call.name(sink).l.argument.order(sink_index)
+            val paths = this_sink.reachableByFlows(this_src).p
+            println(paths)
+            if(paths.length > 0){
+                results += paths
+            }
+        }
+    }
+    return results
+}
+
 import scala.collection.mutable.ListBuffer 
 def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[String] = {
     val results:ListBuffer[List[String]] = ListBuffer()
@@ -98,6 +118,7 @@ def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,In
             // tracing arguments that might not be accurate), yet at the same time 
             // I found this same approach to avoid dead code (more sound) more so 
             // than the approach above.
+            print("Checking flow to any args: any args: " + caller + "(...)->" + sink+"(...)\n")
             def paths2 = cpg.call.name(sink).reachableByFlows(cpg.call.name(caller)).p
 
             // So now I have two lists of possible paths.
@@ -280,10 +301,56 @@ def getFlow2() = {
     filteredSinkPMethods.reachableByFlows(filteredSrcPMethods).p
 }
 
+// Get the first argument of gets(), but only if the call to gets() is reachable from main
+// By "reachable" we mean there is a path in the CPG from main() to the call.
+// Note that the actual logic to execute the path may not be possible, e.g. it could still be dead code
+// In English, this accesses the method "gets" in the CPG, 
+// accesses all callers of "gets", filters on only those that have "main" as an ancestor.
+// Of those callers of "gets", this line accesses the "gets" calls 
+// (as the callers may call other functions aside from gets),
+// and finally returns the first argument to each of those calls.
+//
+// More concisely, this line simply returns the "gets" "source" likely reachable by main,
+// where "likely reachable" means a call path exists from main to "gets".
+// Note: This same logic will NOT detect calls WITHIN "main".
+cpg.method.name("gets").caller.filter(x => x.repeat(_.caller)(_.until(_.name("main"))).l.length>0).call.name("gets").argument.order(1).l
+
+// This code below SHOULD find all calls to "system", including "system" calls from "main" via a second query appended to the first with "++"
+val caller = "source_3"
+val index = 1
+val start = "main"
+val sinks = cpg.method.name(caller).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(caller).argument.order(index) ++ cpg.method.name(caller).caller.dedup.name(start).call.name(caller).argument.order(index) 
+
+// Now apply the logic above to getAllPaths to only get paths "reachable" by some start point, 
+// in this case I just use "main", though we could of course choose any other starting point, such as the target function of a thread:
+def getAllReachablePaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)], start:String):ListBuffer[List[String]] = {
+    val results:ListBuffer[List[String]] = ListBuffer()
+    for((caller, source, tainted_index) <- sources){
+        for((sink, sink_index) <- sinks){
+            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
+            def this_src = cpg.method.name(caller).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(caller).argument.order(tainted_index) ++ cpg.method.name(caller).caller.dedup.name(start).call.name(caller).argument.order(tainted_index)
+
+            def this_sink = cpg.method.name(sink).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(sink).argument.order(sink_index) ++ cpg.method.name(sink).caller.dedup.name(start).call.name(sink).argument.order(sink_index)
+            
+            def paths = this_sink.reachableByFlows(this_src).p
+            if(paths.length > 0){
+               results += paths
+            }
+        }
+    }
+    return results
+}
+
+val my_sources = getFunctionsThatTaintParamPointers
+my_sources += (("gets", "n/a", 1))
+val my_sinks = List(("system",1))
+val start = "main"
+getAllReachablePaths(my_sources, my_sinks, start)
+
+// TODO Define more sources (include argv) and sinks, e.g.
+
 // https://blog.cys4.com/exploit/reverse-engineering/2022/04/18/From-Patch-To-Exploit_CVE-2021-35029.html
 // def sink_exec = cpg.method.name(".*exec.*").callIn.argument // all the arguments
 // def sink_popen = cpg.method.name("popen").callIn.argument(1) // restrict to argument 1
 // def sink_system = cpg.method.name("system").callIn.argument(1) // restrict to argument 1
 // sink_exec.reachableByFlows(src).map( _.elements.map( n => (n.lineNumber.get,n.astParent.code) )).l
-
-

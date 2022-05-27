@@ -224,7 +224,8 @@ def getFunctionsThatTaintParamPointers(sources:Map[String,List[Int]], variadicFu
                     println("maxNumberOfArguments for "+sourceCaller.name + ":" + maxNumberOfArguments +"<" + taintedParam+"; no more args to check after")
                     break
                 }
-                def sink = cpg.call.name(source).argument.order(taintedParam)
+                //TODO whuch of these two approaches should I use.
+                //def sink = cpg.call.name(source).argument.order(taintedParam)
                 def sink = cpg.method.name(source).parameter.order(taintedParam)
 
                 // At this point I know that sourceCaller calls a source function.
@@ -239,7 +240,7 @@ def getFunctionsThatTaintParamPointers(sources:Map[String,List[Int]], variadicFu
                     if(path.length > 0){
                         println("Found taint! " +sourceCaller.name+"("+sourceCallerParameter+")->" + source + "("+taintedParams+")")
                         println("cpg.call.name(\""+source+"\").argument.order("+taintedParam+").reachableBy(cpg.call.name(\""+sourceCaller.name+"\").argument.order("+sourceCallerParameter+"))")
-                        println(sink.id.head + "==" + path.id.head+"(src.id.head: " + src.id.head+")")
+                        //println(sink.id.head + "==" + path.id.head+"(src.id.head: " + src.id.head+")")
                         println(path)
                         earlyResults += ((sourceCaller.name, sourceCallerParameter, source, taintedParam))
                     }
@@ -309,6 +310,43 @@ def getAllReachablePaths(sources:ListBuffer[(String, Int, String, Int)], sinks:L
     return results
 }
 
+def removeFalsePositives(sources:ListBuffer[(String, Int, String, Int)], sinks:List[(String,Int)], allPaths:ListBuffer[List[String]]):ListBuffer[List[String]]{
+    val results:ListBuffer[List[String]] = ListBuffer()
+    for(paths<-allPaths){
+        for(path <- paths){
+            val lines = path.split("\\n").takeRight(3)
+            var source = ""
+            var sink = ""
+            var taintedVars = Set()
+            var 
+            // Which variables are tainted from the begining?
+            for(source, taintedIndex, _, _ <- sources){
+                if(lines.first contains source+"(")
+                var args = lines.first.split('|')(1).split(',')
+                args(0) = args(0).split(source + "\\(")(1)
+                args.last = args.last.trim().stripSuffix(")") 
+                // TODO
+            }
+            // Which sink does this path use?  It's in the last line of the results
+            // What if there are multiple parameters for this sink function?
+            // I'm not aware of any sinks matching this description, 
+            // but as long as any of them reach the sink node that's fine.            
+            for(sink, _, _, _ <-  path._3){
+                if(lines.last contains source+"(")
+                // TODO
+
+            }
+
+            for(line <- lines){
+
+            }            
+        }
+    )
+        val thisSrc = 
+
+    }
+}
+
 var sources:Map[String,List[Int]] = Map()
 sources += ("gets" -> List(1))
 sources += ("fgets" -> List(1))
@@ -323,16 +361,19 @@ sources += (".*_scanf" -> Range(2,10).l)
 */
 val variadicFunctions:List[String] = List("__isoc99_fscanf", ".*fscanf", "__isoc99_scanf", "scanf", "__isoc99_sscanf", "sscanf")
 
+// TODO Use the block below for production
 val mySources = getFunctionsThatTaintParamPointers(sources, variadicFunctions)
 mySources += (("gets", 1, "n/a", 1))
 val mySinks = List(("system",1))
 val start = "main"
-getAllReachablePaths(mySources, mySinks, start)
+var allReachablePaths = getAllReachablePaths(mySources, mySinks, start)
 
+
+// This block is only for testing!
 val mySources = ListBuffer(("source_4", 2, "n/a", 1))
 val mySinks = List(("system",1))
 val start = "main"
-getAllReachablePaths(mySources, mySinks, start)
+var allReachablePaths = getAllReachablePaths(mySources, mySinks, start)
 // TODO Define more sources (include argv) and sinks, e.g.
 
 // Reference: https://blog.cys4.com/exploit/reverse-engineering/2022/04/18/From-Patch-To-Exploit_CVE-2021-35029.html

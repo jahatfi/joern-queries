@@ -317,29 +317,55 @@ def removeFalsePositives(sources:ListBuffer[(String, Int, String, Int)], sinks:L
             val lines = path.split("\\n").takeRight(3)
             var source = ""
             var sink = ""
-            var taintedVars = Set()
-            var 
+            var taintedVars = scala.collection.mutable.Set[String]()
+            var sinkPoints = scala.collection.mutable.Set[String]()
+
             // Which variables are tainted from the begining?
             for(source, taintedIndex, _, _ <- sources){
-                if(lines.first contains source+"(")
-                var args = lines.first.split('|')(1).split(',')
-                args(0) = args(0).split(source + "\\(")(1)
-                args.last = args.last.trim().stripSuffix(")") 
-                // TODO
+                if(lines.first contains source+"("){
+                    var args = lines.first.split('|')(1).split(',')
+                    args(0) = args(0).split(source + "\\(")(1)
+                    args(args.size-1) = args.last.trim().stripSuffix(")") 
+
+                    // Enumerate args and add the tainted one
+                    // TODO I may need to sanitize/parse out the variable
+                    // e.g. what if args(taintedIndex) is "my_var+5"?
+                    // I can check if the arg is a member of the function by accessing the function like so:
+                    // cpg.file("filename").method.lineNumberGte(X).lineNumberLte(Y)
+                    // Because filename, X, and Y are all known!
+                    taintedVars += args(taintedIndex) 
+                }
             }
             // Which sink does this path use?  It's in the last line of the results
             // What if there are multiple parameters for this sink function?
             // I'm not aware of any sinks matching this description, 
             // but as long as any of them reach the sink node that's fine.            
-            for(sink, _, _, _ <-  path._3){
-                if(lines.last contains source+"(")
-                // TODO
+            for(sink, sinkIndex <-  sinks){
+                if(lines.last contains source+"("){
+                    var args = lines.first.split('|')(1).split(',')
+                    args(0) = args(0).split(source + "\\(")(1)
+                    args(args.size-1) = args.last.trim().stripSuffix(")") 
 
+                    // Enumerate args and add the tainted one
+                    // TODO I may need to sanitize/parse out the variable
+                    // e.g. what if args(taintedIndex) is "my_var+5"?
+                    // I can check if the arg is a member of the function by accessing the function like so:
+                    // cpg.file("filename").method.lineNumberGte(X).lineNumberLte(Y)
+                    // Because filename, X, and Y are all known!
+                    sinkPoints += args(taintedIndex) 
+                }
             }
 
-            for(line <- lines){
-
-            }            
+            /* At this point I know exactly which variables are tainted at 
+            the outset, and which variable(s) need to still be tainted at 
+            the end to form the desired parameter specific sink+source path.
+            Next I need to trace them (I'll trace the opposite direction: 
+            sink to source).
+            */
+            for(line in lines.reverse){
+                // Trace data dependencies
+                // args is still valid from the block above
+            }
         }
     )
         val thisSrc = 

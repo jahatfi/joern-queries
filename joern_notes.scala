@@ -7,67 +7,72 @@
 // Follow the instructions for installing Joern (https://docs.joern.io/home), then:
 
 
-// start Joern, e.g.
+// In a terminal, start Joern, e.g.
 joern
 // import the code, e.g.
 importCode("layers.c")
 // Run the dataflow command
 run.ossdataflow
-// Save the CPG
+// Save the CPG:
 save
 
 // Find paths from a "gets" source to a "system" sink
 cpg.call.name("system").reachableByFlows(cpg.call.name("gets")).p
 
+// Note: This first method was an early prototype. 
+// You can skip it if you find the notes hard to understand.
+// but I encourage you to at least run the query as shown.
+// I provide more advanced versions of this function later on.
 
-// Rewrite the above more generically by providing 4 args:
-// 1. The hard arguement to identify (I will show how to find automatically later.
+// Rewrite the above more generically by providing 6 args:
+// 1. The hard argument to identify (I will show how to find automatically later.)
 //    Provide the name of a function that taints its arguments by calling a source.
 //    (assume all arguments tainted for now) - I address this assumption later.
-//    I used "source_3" because it taints its first arg via a call to "gets".
-// 2. The source function that taints a parameter pointer, e.g. "gets", "recv", etc
-// 3. The index of the tainted sink parameter.  "gets" taints the first (and only)
+//    I used "source_3" because it taints its second arg via a call to "gets".
+// 2. The index of the parameter tainted by the function above (assume only one for now.)
+// 3. The source function that taints a parameter pointer, e.g. "gets", "recv", etc
+// 4. The index of the tainted sink parameter.  "gets" taints the first (and only)
 //    parameter, so this would be 1.  If I wanted to "recv" as my sink, I'd used 2.
+// 5. A sink function, e.g. "system"
+// 6. The index of the parameter to the sink function above we need to control.  
+//    (Assume only one for now.)
 
 // You can pick and source+sink pair you like, but using this, you do need to ID the first argument manually.  
 // "That's what I'm trying to avoid!" you say.  Indeed.  Keep reading. :)
 
-// Note that this was an early prototype. You can skip it if you find it hard to understand, 
 // but I encourage you to at least run the query as shown.
 // I provide more advanced versions of this function later on.
-def getSinglePath(function_that_taints_param_ptr:String, source:String, tainted_index:Int, sink_first_arg:String) = {
-    //val function_that_taints_param_ptr = "source_3"
-    val source_params = cpg.method.name(function_that_taints_param_ptr).parameter
+def getSinglePath(functionThatTaintsParamPtr:String, taintedParamIndex:Int, source:String, taintedSinkParam:Int, thisSink:String, sinkIndex:Int) = {
+    val source_params = cpg.method.name(functionThatTaintsParamPtr).parameter.order(taintedParamIndex)
     val filteredParams = source_params.filter(
         param => {
-            //val src = method.parameter
-            val sink = cpg.method.ast.isCallTo(source).argument(tainted_index)
+            val sink = cpg.method.ast.isCallTo(source).argument(taintedSinkParam)
             sink.reachableBy(param)
         }.size > 0
     )
 
-    val index_of_tainted_param = filteredParams.index.head
-    val src = cpg.call.name(function_that_taints_param_ptr).argument.order(index_of_tainted_param)
-    val sink = cpg.call.name(sink_first_arg)
+    val indexOfTaintedParam = filteredParams.index.head
+    val src = cpg.call.name(functionThatTaintsParamPtr).argument.order(sinkIndex)
+    val sink = cpg.call.name(thisSink).argument.order(sinkIndex)
     sink.reachableByFlows(src).p
 }
 // Enter the function above, then try this:
-getSinglePath("source_3", "gets", 1, "system") 
+getSinglePath("source_3", 2, "gets", 1, "system", 1) 
 
 // Can we further rewrite the function above completely generically?
-// Not only does this work for sources that taint parameter pointers,
+// Not only does this work for sources that taint parametworksper pointers,
 // but it ALSO works for functions that tainted returned pointers.
 // Note that this yields false positives.  A more accurate version is presented much later in this document
 // but this shows the general idea without the complexity required to avoid unreachable code.
 def getAllPathsv1(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[List[String]] = {
     val results:ListBuffer[List[String]] = ListBuffer()
-    for((caller, source, tainted_index) <- sources){
-        for((sink, sink_index) <- sinks){
-            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
+    for((caller, source, taintedIndex) <- sources){
+        for((sink, sinkIndex) <- sinks){
+            print("Checking " + caller + "(" + taintedIndex + ")->" + sink+"("+sinkIndex+")\n")
             // TODO: Fix the fact that this is getting unreachable code :(
-            val this_src = cpg.call.name(caller).argument.order(tainted_index)
-            val this_sink = cpg.call.name(sink).l.argument.order(sink_index)
-            val paths = this_sink.reachableByFlows(this_src).p
+            val thisSrc = cpg.call.name(caller).argument.order(taintedIndex)
+            val thisSink = cpg.call.name(sink).l.argument.order(sinkIndex)
+            val paths = thisSink.reachableByFlows(thisSrc).p
             println(paths)
             if(paths.length > 0){
                 results += paths
@@ -78,26 +83,26 @@ def getAllPathsv1(sources:ListBuffer[(String, String, Int)], sinks:List[(String,
 }
 
 // Enter the function above, then try this:
-val my_sources = ListBuffer(("gets", "n/a", 1))
-val my_sinks = List(("system",1))
-getAllPathsv1(my_sources, my_sinks)
+val mySources = ListBuffer(("gets", "n/a", 1))
+val mySinks = List(("system",1))
+getAllPathsv1(mySources, mySinks)
 
 // Here's the full version we'll use moving forward.
 import scala.collection.mutable.ListBuffer 
 def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[String] = {
     val results:ListBuffer[List[String]] = ListBuffer()
-    for((caller, source, tainted_index) <- sources){
-        for((sink, sink_index) <- sinks){
-            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
+    for((caller, source, taintedIndex) <- sources){
+        for((sink, sinkIndex) <- sinks){
+            print("Checking " + caller + "(" + taintedIndex + ")->" + sink+"("+sinkIndex+")\n")
             // Ideally we'd only need the 3 lines below to trace any path from any source 
             // to any sink.  This code takes into account the exact parameters that are tainted (my contribution), 
             // including return values (native to Joern.)
             // That siad, it yields results with both duplicate lines AND unreachable code.
             // E.g. When analyzing layers.c,  it yields sink_3() as a
             // complete source->sink path, yet sink_3 is never called from anywhere!
-            def this_src = cpg.call.name(caller).argument.order(tainted_index)
-            def this_sink = cpg.call.name(sink).l.argument.order(sink_index)
-            def paths = this_sink.reachableByFlows(this_src).p
+            def thisSrc = cpg.call.name(caller).argument.order(taintedIndex)
+            def thisSink = cpg.call.name(sink).l.argument.order(sinkIndex)
+            def paths = thisSink.reachableByFlows(thisSrc).p
 
             // This whole mess below is designed to exclude unreachable code.
             // The code below does not trace flow paths by specific arguments,
@@ -124,27 +129,27 @@ def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,In
                     // requires the complex analysis below.
                     // First, remove duplicate lines from both paths(2).  
                     // This is gonna be ugly :(
-                    val dedup_paths2:ListBuffer[String] = ListBuffer()
+                    val dedupPaths2:ListBuffer[String] = ListBuffer()
                     for(path2 <- paths2){
                         for(line <- path2.split("\\n")){
-                            if(!dedup_paths2.contains(line.trim() + "\n")){
-                                dedup_paths2 += line.trim() + "\n"
+                            if(!dedupPaths2.contains(line.trim() + "\n")){
+                                dedupPaths2 += line.trim() + "\n"
                             }
                         }                        
                     }                        
                     for(path <- paths){
-                        val dedup_paths:ListBuffer[String] = ListBuffer()
+                        val dedupPaths:ListBuffer[String] = ListBuffer()
                         for(line <- path.split("\\n")){
-                            if(!dedup_paths.contains(line.trim() + "\n")){
-                                dedup_paths += line.trim() + "\n"
+                            if(!dedupPaths.contains(line.trim() + "\n")){
+                                dedupPaths += line.trim() + "\n"
                             }
                         }
                         // This path in paths has been deduplicated (duplicates removed)
                         // If the same path exists in paths2 (also deduplicated), I am 
                         // more confident that this path is NOT a false positive.
                         // Save it to the results
-                        val new_paths = (dedup_paths intersect dedup_paths2)
-                        results += new_paths.l                 
+                        val newPaths = (dedupPaths intersect dedupPaths2)
+                        results += newPaths.l                 
                     }
                 }
             }
@@ -156,87 +161,112 @@ def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,In
     }
     return results2
 }
-val my_sources = ListBuffer(("gets", "n/a", 1))
-val my_sinks = List(("system",1))
-getAllPaths(my_sources, my_sinks)
+val mySources = ListBuffer(("gets", "n/a", 1))
+val mySinks = List(("system",1))
+getAllPaths(mySources, mySinks)
 
 // I want to programatically find all functions that taint parameter pointers
-// Pass in a dictionary of function names (e.g. {gets:1} to tainted indices
+// Pass in a List of Maps, mapping function names to tainted parameters, e.g. (gets<-List(1))
 // Return a list of lists.  
-// Each inner list looks liek this:
+// Each inner list of the return value looks like this:
 // 1. Name of function that calls the source
 // 2. Name of source function
 // 3. Index of tainted parameter
 // TODO: These examples are confusing, as the first item in the list above 
 // JUST SO HAPPENS to taint the parameter WITH THE SAME INDEX as the sink that it calls!
 // TODO: Also, what if a function taints multiple parameters?  It should return a List of tainted parameters!
- of function names to tainted indices, e.g. {source_3:1}
+// of function names to tainted indices, e.g. {source_3:1}
 import scala.collection.mutable.ListBuffer 
 import scala.util.control.Breaks._
-def getFunctionsThatTaintParamPointers(sources:Map[String,List[Int]], variadicFunctions:List[String]):ListBuffer[(String, String, Int)]={
+def getFunctionsThatTaintParamPointers(sources:Map[String,List[Int]], variadicFunctions:List[String]):ListBuffer[(String, Int, String, Int)]={
     // Save results in earlyResults
-    var earlyResults:ListBuffer[(String, String, Int)] = ListBuffer()
+    var earlyResults:ListBuffer[(String, Int, String, Int)] = ListBuffer()
     println("Hello, here's my sources", sources)
     println("Hello, here's my variadics", variadicFunctions)     
 
-    // Iterate over each source, then each (possibly) tainted parameter
-    for ((source, tainted_params) <- sources){
+    // Iterate over each source (e.g. "gets", "recv"), then each (possibly) tainted parameter
+    for ((source, taintedParams) <- sources){
         breakable{
-            if(source != "main" && cpg.call.name(source).l.length==0){
-                println(source+" not found, skipping.")
-                break
-            } 
-            def candidateMethods = {cpg.method.name(source).caller}  
+        if(source != "main" && cpg.call.name(source).l.length==0){
+            println(source+" not found, skipping.")
+            break
+        } 
+        // Find all methods (e.g. 'source_3') that call this source (e.g. 'gets')
+        def sourceCallers =  cpg.method.name(source).caller.l 
+        println(sourceCallers.name.l)
+        breakable{
+        for(sourceCaller <- sourceCallers){
+            println("Looking at "+sourceCaller.name+"->"+source)
+            // I want to iterate over each parameter to each sourceCaller and determine which ones, if any, get tainted
             var maxNumberOfArguments = 1000
             if(variadicFunctions.contains(source)){
+                // This is a variadic function
+                // Determine the maximum number of args ever passed to this function
                 maxNumberOfArguments = cpg.call.name(source).argument.l.groupBy(x => x.lineNumber).l.maxBy(x=>x._2.length)._2.length 
             }
-            
-            // Iterate over each (possibly) tainted parameter
+            else{
+                val calls = cpg.call.name(sourceCaller.name).l
+                if(calls.length > 0){
+                    maxNumberOfArguments = cpg.call.name(sourceCaller.name).head.argument.l.length
+                }
+                else{
+                    println(sourceCaller.name + " calls " + source+ " but itself never appears to be called. skipping.")
+                    break
+                }
+
+            }
+            // What if this sink is known to taint multiple parameters? 
+            // I don't know of any, but I should allow for the possibility
             breakable{
-                for (tainted_param <- tainted_params){
-                    if(maxNumberOfArguments < tainted_param){
-                        println("Was about to examine variadic source: " + source +" but no more args to check after #" + tainted_param)
-                        break
-                    }
+            for(taintedParam <- taintedParams){
+                // Break out of variadic parameter analysis ASAP
+                if(maxNumberOfArguments < taintedParam){
+                    println("maxNumberOfArguments for "+sourceCaller.name + ":" + maxNumberOfArguments +"<" + taintedParam+"; no more args to check after")
+                    break
+                }
+                def sink = cpg.call.name(source).argument.order(taintedParam)
+                def sink = cpg.method.name(source).parameter.order(taintedParam)
 
-                    println("Looking at source " + source + ", tainted param #"+ tainted_param)
-
-                    // E.g. "gets", 1
-                    def filteredMethods = {candidateMethods.filter(
-                        method => {
-                            val sink = cpg.method.ast.isCallTo(source).argument(tainted_param)
-                            sink.reachableBy(method.parameter)        
-                        }.size > 0
-                    )}.name    
-                    var r = filteredMethods.l
-                    if(r.length >= 1){
-                        println("Filtered method is " + r)
-                        earlyResults += ((filteredMethods.head, source, tainted_param))
+                // At this point I know that sourceCaller calls a source function.
+                // For each parameter to sourceCaller, which, if any, are tainted by that source?
+                for(sourceCallerParameter <- Range(1, maxNumberOfArguments+1)){
+                    println("Looking at "+sourceCaller.name+"("+sourceCallerParameter+")->" + source + "("+taintedParams+")")
+                    //def src = cpg.call.name(sourceCaller.name).argument.order(sourceCallerParameter)
+                    def src = cpg.method.name(sourceCaller.name).parameter.order(sourceCallerParameter)
+                    
+                    val path = sink.reachableByFlows(src).l
+                    
+                    if(path.length > 0){
+                        println("Found taint! " +sourceCaller.name+"("+sourceCallerParameter+")->" + source + "("+taintedParams+")")
+                        println("cpg.call.name(\""+source+"\").argument.order("+taintedParam+").reachableBy(cpg.call.name(\""+sourceCaller.name+"\").argument.order("+sourceCallerParameter+"))")
+                        println(sink.id.head + "==" + path.id.head+"(src.id.head: " + src.id.head+")")
+                        println(path)
+                        earlyResults += ((sourceCaller.name, sourceCallerParameter, source, taintedParam))
                     }
                 }
-            }
-        }
-    }
+            }}
+        }}
+    }}
     return earlyResults
 }
 
 var sources:Map[String,List[Int]] = Map()
 sources += ("gets" -> List(1))
 sources += ("fgets" -> List(1))
-sources += ("recv" -> List(2))   
+sources += ("recv" -> List(2))  
+/* 
 sources += ("recvfrom" -> List(2))     
 sources += ("read" -> List(2))
 sources += ("main" -> List(1,2))
 sources += (".*fscanf" -> Range(3,10).l)
 sources += (".*_sscanf" -> Range(3,10).l)
 sources += (".*_scanf" -> Range(2,10).l)
-
+*/
 val variadicFunctions:List[String] = List("__isoc99_fscanf", ".*fscanf", "__isoc99_scanf", "scanf", "__isoc99_sscanf", "sscanf")
-val my_sources = getFunctionsThatTaintParamPointers(sources, variadicFunctions)
-my_sources += (("gets", "n/a", 1))
-val my_sinks = List(("system",1))
-getAllPaths(my_sources, my_sinks)
+val mySources = getFunctionsThatTaintParamPointers(sources, variadicFunctions)
+mySources += (("gets", 0, "n/a", 1))
+val mySinks = List(("system",1))
+getAllPaths(mySources, mySinks)
 
 
 // Get the first argument of gets(), but only if the call to gets() is reachable from main
@@ -261,16 +291,16 @@ val sinks = cpg.method.name(caller).caller.filter(x => x.repeat(_.caller)(_.unti
 
 // Now apply the logic above to getAllPaths to only get paths "reachable" by some start point, 
 // in this case I just use "main", though we could of course choose any other starting point, such as the target function of a thread:
-def getAllReachablePaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)], start:String):ListBuffer[List[String]] = {
+def getAllReachablePaths(sources:ListBuffer[(String, Int, String, Int)], sinks:List[(String,Int)], start:String):ListBuffer[List[String]] = {
     val results:ListBuffer[List[String]] = ListBuffer()
-    for((caller, source, tainted_index) <- sources){
-        for((sink, sink_index) <- sinks){
-            print("Checking " + caller + "(" + tainted_index + ")->" + sink+"("+sink_index+")\n")
-            def this_src = cpg.method.name(caller).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(caller).argument.order(tainted_index) ++ cpg.method.name(caller).caller.dedup.name(start).call.name(caller).argument.order(tainted_index)
+    for((caller, callerIndex, source, taintedIndex) <- sources){
+        for((sink, sinkIndex) <- sinks){
+            print("Checking " + caller + "(" + taintedIndex + ")->" + sink+"("+sinkIndex+")\n")
+            def thisSrc = cpg.method.name(caller).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(caller).argument.order(taintedIndex) ++ cpg.method.name(caller).caller.dedup.name(start).call.name(caller).argument.order(taintedIndex)
 
-            def this_sink = cpg.method.name(sink).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(sink).argument.order(sink_index) ++ cpg.method.name(sink).caller.dedup.name(start).call.name(sink).argument.order(sink_index)
+            def thisSink = cpg.method.name(sink).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(sink).argument.order(sinkIndex) ++ cpg.method.name(sink).caller.dedup.name(start).call.name(sink).argument.order(sinkIndex)
             
-            def paths = this_sink.reachableByFlows(this_src).p
+            def paths = thisSink.reachableByFlows(thisSrc).p
             if(paths.length > 0){
                results += paths
             }
@@ -283,21 +313,26 @@ var sources:Map[String,List[Int]] = Map()
 sources += ("gets" -> List(1))
 sources += ("fgets" -> List(1))
 sources += ("recv" -> List(2))   
+/*
 sources += ("recvfrom" -> List(2))     
 sources += ("read" -> List(2))
 sources += ("main" -> List(1,2))
 sources += (".*fscanf" -> Range(3,10).l)
 sources += (".*_sscanf" -> Range(3,10).l)
 sources += (".*_scanf" -> Range(2,10).l)
-
+*/
 val variadicFunctions:List[String] = List("__isoc99_fscanf", ".*fscanf", "__isoc99_scanf", "scanf", "__isoc99_sscanf", "sscanf")
 
-val my_sources = getFunctionsThatTaintParamPointers(sources, variadicFunctions)
-my_sources += (("gets", "n/a", 1))
-val my_sinks = List(("system",1))
+val mySources = getFunctionsThatTaintParamPointers(sources, variadicFunctions)
+mySources += (("gets", 1, "n/a", 1))
+val mySinks = List(("system",1))
 val start = "main"
-getAllReachablePaths(my_sources, my_sinks, start)
+getAllReachablePaths(mySources, mySinks, start)
 
+val mySources = ListBuffer(("source_4", 2, "n/a", 1))
+val mySinks = List(("system",1))
+val start = "main"
+getAllReachablePaths(mySources, mySinks, start)
 // TODO Define more sources (include argv) and sinks, e.g.
 
 // Reference: https://blog.cys4.com/exploit/reverse-engineering/2022/04/18/From-Patch-To-Exploit_CVE-2021-35029.html

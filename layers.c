@@ -14,7 +14,8 @@ int global_int = 6;
 //Function prototypes (normally in a .h file)
 char source_1();
 int source_2(int z);
-void source_3(char *buff, int len);
+void source_3(int len, char *buff);
+void source_4(char *buff_to_taint, int n);
 int layer_1_a(int a, char *buff);
 int layer_1_b(bool flag, char *buff, float c, double d);
 void layer_1_c(char * buff, int b);
@@ -116,7 +117,7 @@ source_1 (){
 #endif
 
 //===========================================================
-void source_3(char *source_3_buff, int len){
+void source_3(int len, char *source_3_buff){
     int a;
     int count;
     int numBytes;
@@ -128,7 +129,7 @@ void source_3(char *source_3_buff, int len){
     gets(source_3_buff);
 }
 
-void source_4(int n, char *buff_to_taint){
+void source_4(char *buff_to_taint, int n){
     socketfd = socket(AF_INET, SOCK_STREAM, 0);
     // Would normally bind and open socket or some such steps, but
     // skipping for simplicity
@@ -335,15 +336,20 @@ void main (int argc, char * argv[]){
     // Path #2 is simply the next 4 lines
     int len = 256;
     char buff[len];
-    source_3(buff, len);
+    source_3(len, buff);
     system(buff);
 
     // Path #3
     char buff4[len];
-    source_4(len, buff4);
+    source_4(buff4, len);
     system(buff4);
 
-    // Path #4 is simply the next 3 lines
+    // Path #5 Anti-example
+    char buff4[len];
+    source_4(buff4, len);
+    system(len);    
+
+    // Path #5 is simply the next 3 lines
     char * buff3 = return_tainted_buff();
     sink_1(buff3);
     free(buff3);    
@@ -376,7 +382,7 @@ void main (int argc, char * argv[]){
     free(tainted_source_1_buff);
     //source_2(1);
     (*source_2)(1);  //SIFT appears to work with function pointers
-    source_3(buff, len);
+    source_3(len, buff);
 
     strcpy(buff, argv[1]);  //This is bad code.
     fscanf(stdin, "%d%d", &my_int, &my_int2); 

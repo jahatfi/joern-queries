@@ -38,3 +38,39 @@ sink.reachableByFlows(src).p
 cpg.call.name("system").astChildren.isExpression.astParent.l
 cpg.call.name("system").l
 
+// Turns out Joern can't track data flow between function arguments, as these options all yield false positives:
+def src = cpg.call.name("source_3").argument.order(2)
+def sink = cpg.call.name("recv").argument.order(2) 
+sink.reachableBy(src)
+
+def src = cpg.call.name("source_4").argument.order(2)
+def sink = cpg.call.name("recv").argument.order(2) 
+sink.reachableBy(src).p
+
+def src = cpg.call.name("source_4").argument.order(1)
+def sink = cpg.call.name("recv").argument.order(2) 
+sink.reachableBy(src).p
+
+def src = cpg.call.name("source_4").argument.order(2)
+def sink = cpg.call.name("recv").argument.order(2) 
+sink.reachableByFlows(src).p
+
+def src = cpg.call.name("source_4").argument.order(1)
+def sink = cpg.call.name("recv").argument.order(2) 
+sink.reachableByFlows(src).p
+
+def src = cpg.method.name("source_4").parameter.order(1)
+def sink = cpg.method.name("recv").parameter.order(2) 
+sink.reachableBy(src).p
+
+def src = cpg.method.name("source_4").parameter.order(2)
+def sink = cpg.method.name("recv").parameter.order(2) 
+sink.reachableBy(src).p
+
+def src = cpg.method.name("source_4").parameter.order(1)
+def sink = cpg.method.name("recv").parameter.order(2) 
+sink.reachableByFlows(src).p
+
+def src = cpg.method.name("source_4").parameter.order(2)
+def sink = cpg.method.name("recv").parameter.order(2) 
+sink.reachableByFlows(src).p

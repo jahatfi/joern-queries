@@ -74,3 +74,32 @@ sink.reachableByFlows(src).p
 def src = cpg.method.name("source_4").parameter.order(2)
 def sink = cpg.method.name("recv").parameter.order(2) 
 sink.reachableByFlows(src).p
+
+// Hold up!  This works for x42.c
+cpg.call.name("strcmp").parameter.order(1).reachableBy(cpg.method.parameter.order(2)).l
+// But does this?  Edit: Yes it does.
+cpg.call.name("strcmp").parameter.order(1).reachableBy(cpg.method.name("main").parameter.order(2)).l
+
+
+// So shouldn't this?  
+def src = cpg.call.name("source_4").parameter.order(1)
+def sink = cpg.call.name("system").parameter.order(2) 
+sink.reachableByFlows(src).p
+
+
+// This from the VLC report:
+def src = cpg.method("source_3").callIn.argument(2).l
+
+cpg.method("system2").callIn.l.filter { system =>
+  system
+    .argument(2)
+    .reachableBy(src)
+    //.where(_.inAssignment.target.codeExact(system.argument(1).code))
+    //.whereNot(_.argument(1).codeExact(system.argument(1).code))
+    .hasNext
+}.l
+
+
+def src =  cpg.method("source_3").callIn.argument(1)
+def sink = cpg.method("system2").callIn.argument(1)
+sink.reachableBy(src)

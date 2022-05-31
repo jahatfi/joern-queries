@@ -13,27 +13,196 @@ As stated on [Joern's documentation page](https://docs.joern.io/home), Joern is 
 The free Joern workshop does a great job of introducing the concepts of Joern, and walks the user through the process of getting started, all the way to intermediate queries.  I will recommend the reader review it rather than reinvent the wheel here.  Note that both workshops in the repo below are nearly identical, and one need only go through one of them.
 [Joern workshop material](https://github.com/joernio/workshops)
 
-## Joern Limitations and Dark Magic for Overcoming Them
-At this time the data flow offered by Joern's reachableBy* functions (promoted in most examples and blogs) appears to only work at the function level. It appears incapable of distinguising between function arguments.  This is not an issue for sources and sinks that only take one arguments (e.g. `gets()`, `system()`, respectively) but lacks the abiility to avoid false positives if seeking to use a specific argument as a source or sink, e.g. the `buf` argument of `recv()`.  In a non-trivial program I believe (though without proof) that this could yield too many false positives to be of signifant use for complex analysis of non-trivial programs.  It's my view that analysis would be limited to simpler queries to avoid the workload of manually analyzing the results to determine which ones are true positives.  Yet such an approach could miss significant software flaws.
+## More intermediate examples
+So as not to call my own examples "advanced", I'll offer that I think the queries in [my notes](joern_notes.scala) are at least intermediate in difficulty.  I've not yet found the capability they offer anywhere else on the internet, and they took me a bit to develop on my own, so I assume they're non-trivial for a beginner.   That all said, I do my best to walk the reader through the process of developing them in order to encourage further work and creating one's own Joern queries.  Jump over to those notes to see if there's anything you can learn!
 
-Here's specifically what I've found:
+## Workshop
+The accompanying file "layer.c" is used in these examples.
+Follow the instructions for installing Joern (https://docs.joern.io/home), then:
+In a terminal, start Joern, e.g.  
+`joern`  
+import the code, e.g.  
+`importCode("layers.c")`  
+Run the dataflow command  
+`run.ossdataflow`  
+Save the CPG:  
+`save`  
 
-Say I want to see if argument 1 to `system()` is ever reachable by argument 2 of `source_4()`; I do **not** care if any other path exists between *any* other pair of source/sink argument pairs (note that there are no other arguments so this isn't a great example to show other sink options.) 
+Find paths from a "gets" source to a "system" sink
+With more recent versions of Joern, we must specify exactly which arguments
+we want data flow for:
+cpg.call.name("system").argument(1).reachableByFlows(cpg.call.name("gets").argument(1)).p 
 
-I would define the sink like so:
-`def sink = cpg.call.name("system").argument.order(1)`
-Next, assume that I wish to treat the `buff` argument (2nd argument) of `recv()` as a source. Neither approach shown below has worked for defining the source with either `reachableBy/reachableByFlows` function:
+From this point forward, I will demonstrate intermediate Joern queries that I 
+will treat as primitive to ultimately combine into on large primary query.  Let's jump in.
+```scala
+// Find paths from a "gets" source to a "system" sink
+// With more recent versions of Joern, we must specify exactly which arguments
+// we want data flow for:
+cpg.call.name("system").argument(1).reachableByFlows(cpg.call.name("gets").argument(1)).p 
+```
 
-`def src = cpg.method.name("my_source").parameter.order(2)`
-`def src = cpg.call.name("my_source").argument.order(1)`
+```scala
+// Rewrite the above more generically by providing 4 args:
+// 1. Provide the name of a function that taints its arguments by calling a source.
+//    Assume all arguments tainted for now.  I address this assumption later;
+//    I will show how to automatically find EXACTLY which arguments are tainted.
+//    I used "source_3" because it taints its first arg via a call to "gets".
+//    Granted, this requires work to find, but again, I will show how to ID automatiically later.
+// 2. The source function that taints a parameter pointer, e.g. "gets", "recv", etc
+// 3. The index of the tainted sink parameter.  "gets" taints the first (and only)
+//    parameter, so this would be 1.  If I wanted to "recv" as my sink, I'd used 2.
 
+// You can pick and source+sink pair you like, but using this, you do need to ID the first argument manually.  
+// "That's what I'm trying to avoid!" you say.  Indeed.  Keep reading. :)
 
-Neither approach seems to work as desired.  The `reachableBy/reachableByFlows` functions return results for **all** argument permutations, e.g. if the argument to `system()` is reachable by argument 1 of `source_4()`, but **that is an undesirable result**.  
+// Note that this was an early prototype. You can skip it if you find it hard to understand, 
+// but I encourage you to at least run the query as shown.
+// I provide more advanced versions of this function later on.
+def getSinglePath(function_that_taints_param_ptr:String, source:String, tainted_index:Int, sink_first_arg:String) = {  
+    //val function_that_taints_param_ptr = "source_3"  
+    val source_params = cpg.method.name(function_that_taints_param_ptr).parameter  
+    val filteredParams = source_params.filter(  
+        param => {
+            val sink = cpg.method.ast.isCallTo(source).argument(tainted _index)
+            sink.reachableBy(param)
+        }.size > 0
+    )
+    try{
+        val index_of_tainted_param = filteredParams.index.head  
+        val src = cpg.call.name(function_that_taints_param_ptr).argument.order  (index_of_tainted_param)  
+        val sink = cpg.call.name(sink_first_arg)  
+        sink.reachableByFlows(src).p  
+    }catch{  
+        case x: NoSuchElementException =>{  
+            println("No path from " + source + "(...) to " + function_that_taints_param_ptr + "(...) found")  
+        }  
+    }  
+}  
+```
+Enter the function above, then try this:
+```scala
+getSinglePath("source_3", "gets", 1, "system")`  
+getSinglePath("source_4", "recv", 2, "system")`  
+```
 
-I have contacted the Joern team to determine if I misunderstand Joern's capabilities; perhaps my assessment of Joern's limitation as stated above is incorrect?  In the meantime, I propose a "Dark Magic" solution to address this limitation in the context of my own work. By "Dark Magic" I simply mean that I think the approach is some combination of a hack, a creative solution, not what the creators have in mind, yet still hopefully effective. 
+Moving on to another example. Not only does this work for sources that taint parameter pointers,
+but it ALSO works for functions that taint returned pointers.
+Note that this yields false positives.  A more accurate version is presented much later in this document
+but this shows the general idea without the complexity required to avoid unreachable code.
+```scala
+def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[List[String]] = {
+    val results:ListBuffer[List[String]] = ListBuffer()
+    for((caller, source, taintedIndex) <- sources){
+        for((sink, sinkIndex) <- sinks){
+            print("Checking " + caller + "(" + taintedIndex + ")->" + sink+"("+sinkIndex+")\n")
+            // TODO: Fix the fact that this is getting unreachable code :(
+            val thisSrc = cpg.call.name(caller).argument.order(taintedIndex)
+            val thisSink = cpg.call.name(sink).argument.order(sinkIndex)
+            val paths = thisSink.reachableByFlows(thisSrc).p
+            println(paths)
+            if(paths.length > 0){
+                results += paths
+            }
+        }
+    }
+    return results
+}
+```
+Enter the function above, then try this:  
+```scala
+val mySources = ListBuffer(("gets", "n/a", 1))
+val mySinks = List(("system",1))
+getAllPathsv1(mySources, mySinks)
+```
+It should return 3 results, but note that sink_3 is never called.
+```scala
+// Here's the full version we'll use moving forward.
+import scala.collection.mutable.ListBuffer 
+def getAllPaths(sources:ListBuffer[(String, String, Int)], sinks:List[(String,Int)]):ListBuffer[String] = {
+    val results:ListBuffer[List[String]] = ListBuffer()
+    for((caller, source, taintedIndex) <- sources){
+        for((sink, sinkIndex) <- sinks){
+            print("Checking " + caller + "(" + taintedIndex + ")->" + sink+"("+sinkIndex+")\n")
+            // Ideally we'd only need the 3 lines below to trace any path from any source 
+            // to any sink.  This code takes into account the exact parameters that are tainted (my contribution), 
+            // including return values (native to Joern.)
+            // That said, it yields results with both duplicate lines AND unreachable code.
+            // E.g. When analyzing layers.c,  it yields sink_3() as a
+            // complete source->sink path, yet sink_3 is never called from anywhere!
+            def thisSrc = cpg.call.name(caller).argument(taintedIndex)
+            def thisSink = cpg.call.name(sink).argument(sinkIndex)
+            def paths = thisSink.reachableByFlows(thisSrc).p
 
+            // This whole mess below is designed to exclude unreachable code.
+            // The code below does not trace flow paths by specific arguments,
+            // so in that way it's less complete (more false positives related to 
+            // tracing arguments that might not be accurate), yet at the same time 
+            // I found this same approach to avoid dead code (more sound) more so 
+            // than the approach above.
+            println(paths)
+            print("Checking flow to any args: any args: " + caller + "(...)->" + sink+"(...)\n")
+            def paths2 = cpg.call.name(sink).reachableByFlows(cpg.call.name(caller)).p
+            println(paths2)
 
-My "Dark Magic" approach starts with the results from the approach shown above.  It then traces the use of tainted variables from the results provided to determine if the specific source->sink path exists, thereby filtering out the false positives.   I need to make sure this algortihm is aware of the dependencies enumerated below.  Note that I borrow the dependency terminology from [8].  Of course, as this program analyzes code above assembly level the terminology here differs slightly compared to its use in that paper, which is focuses on assembly code.  For example, the authors use the terms "load"/"store", which are mapped to "source"/"destination" in points 3 & 4 below.  See sections 4.1 for more details.  Finally, note that [8] uses the term 'spurious' data instead of 'tainted', but  [9,10] use the term 'tainted', which is preferred here. They mean the exact same thing in this context.
+            // So now I have two lists of possible paths.
+            // Paths is more specific, but maybe with some false positives.
+            // Start there: we only have more work to do if there's at least one result in paths:
+            if(paths.length > 0){
+                // Per my own convention, if the source is "n/a", it's a regular source function 
+                // (e.g. gets) that Joern can handle natively. Just add paths2 and move on.
+                // TODO Or is it += paths???
+                if(source != "n/a"){
+                    results += paths2
+                    println("Nope")
+                }
+                else{
+                    // This is a function that returns tainted parameters and the 
+                    // requires the complex analysis below.
+                    // First, remove duplicate lines from both paths(2).  
+                    // This is gonna be ugly :(
+                    val dedupPaths2:ListBuffer[String] = ListBuffer()
+                    for(path2 <- paths2){
+                        for(line <- path2.split("\\n")){
+                            if(!dedupPaths2.contains(line.trim() + "\n")){
+                                dedupPaths2 += line.trim() + "\n"
+                            }
+                        }                        
+                    }                        
+                    for(path <- paths){
+                        val dedupPaths:ListBuffer[String] = ListBuffer()
+                        for(line <- path.split("\\n")){
+                            if(!dedupPaths.contains(line.trim() + "\n")){
+                                dedupPaths += line.trim() + "\n"
+                            }
+                        }
+                        // This path in paths has been deduplicated (duplicates removed)
+                        // If the same path exists in paths2 (also deduplicated), I am 
+                        // more confident that this path is NOT a false positive.
+                        // Save it to the results
+                        val newPaths = (dedupPaths intersect dedupPaths2)
+                        results += newPaths.l                 
+                    }
+                }
+            }
+        }
+    }
+    val results2:ListBuffer[String] = ListBuffer()
+    for(r <- results){
+        results2 += r.mkString
+    }
+    return results2
+}
+```
+After defining the function above, run the above like so:
+```scala
+val mySources = ListBuffer(("gets", "n/a", 1))
+val mySinks = List(("system",1))
+getAllPaths(mySources, mySinks)
+```
+
+## Misc Notes
+Ideally, a proper data flow analysis is aware of the dependencies enumerated below.  Note that I borrow the dependency terminology from [8].  Of course, as this program analyzes code above assembly level the terminology here differs slightly compared to its use in that paper, which is focuses on assembly code.  For example, the authors use the terms "load"/"store", which are mapped to "source"/"destination" in points 3 & 4 below.  See sections 4.1 for more details.  Finally, note that [8] uses the term 'spurious' data instead of 'tainted', but  [9,10] use the term 'tainted', which is preferred here. They mean the exact same thing in this context.
 
 1. Copy dependencies: If tainted variable buff is copied to buff2, buff2 is then treated as tainted:
     ```c
@@ -63,9 +232,6 @@ My "Dark Magic" approach starts with the results from the approach shown above. 
         scanf("%d", &dest);  //dest is tainted
         memcpy((char *) &dest, (char *)&source, ); //The content at address *dest is tainted, as that address was not expected to change.
     ```
-
-## More intermediate examples
-So as not to call my own examples "advanced", I'll offer that I think the queries in [my notes](joern_notes.scala) are at least intermediate in difficulty.  I've not yet found the capability they offer anywhere else on the internet, and they took me a bit to develop on my own, so I assume they're non-trivial for a beginner.   That all said, I do my best to walk the reader through the process of developing them in order to encourage further work and creating one's own Joern queries.  Jump over to those notes to see if there's anything you can learn!
 
 ## Other resources
 I found these resources invaluable when learning Joern and creating my own queries.  I hope they help you as much as they helped me!

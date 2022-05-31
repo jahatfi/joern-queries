@@ -328,23 +328,68 @@ void sink_4(char* buff, int len){
 void main (int argc, char * argv[]){
     //TODO Taint a struct, and some dynamically allocated memory
 
-    // Path #1 is simply the next 3 lines
+    // This path is simply the next 3 lines
     char * buff1 = return_tainted_buff();
     system(buff1);
     free(buff1);
 
-    // Path #2 is simply the next 4 lines
+    // This path simply the next 4 lines
     int len = 256;
     char buff[len];
     source_3(len, buff);
     system(buff);
 
-    // Path #3
+    // This path  is simply the next 3 lines
     char buff4[len];
     source_4(buff4, len);
     system(buff4);
 
-    // Path #5 Anti-example
+    // This path has a copy dependency
+    char buff4_cpy = NULL;
+    source_4(buff4, len);
+    buff4_cpy = &buff4[0]
+    system(buff4_cpy);
+
+    // buff4 is sanitized here
+    source_4(buff4, len);
+    buff4[0] = NULL;
+    system(buff4);
+
+    // A goofy example for testing the fuzzy parser.
+    // "len" should be considered tainted despite the type mismatch.
+    // Can Joren detect that it's influenced by the original value from source_4
+    // despite the copy and math operators?
+    int new_len = 0;
+    source_4(len, 64);
+    new_len = len;
+    system(new_len);
+
+    // A goofy example for testing the fuzzy parser.
+    // "len" should be considered tainted despite the type mismatch.
+    // Can Joren detect that it's influenced by the original value from source_4
+    // despite the copy and math operators?
+    source_4(len, 64);
+    new_len = len;
+    new_len += 5;
+    new_len = new_len - 5;
+    new_len *= 2
+    new_len = new_len /= 2;
+    system(new_len);
+
+    // A 3nd goofy example for testing the fuzzy parser.
+    // "len" should NO LONGER  be considered tainted due to the final overwrite.
+    // Can Joren detect that it's influenced by the original value from source_4
+    // despite the copy and math operators?
+    source_4(len, 64);
+    new_len = len;
+    new_len += 5;
+    new_len = new_len - 5;
+    new_len *= 2
+    new_len = new_len /= 2;
+    new_len = 50;
+    system(new_len);  
+
+    // This is an anti-example
     char buff4[len];
     source_4(buff4, len);
     system(len);    

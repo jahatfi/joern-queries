@@ -1,3 +1,1 @@
-Determine if getAllPaths is still needed; if so, patch it.  It may no longer be necessary.
-Keep checking from there.  
 Complete merge from joern_notes.scala into README.md

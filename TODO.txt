@@ -1,1 +1,3 @@
+Pass through functions
+pass forward tainted variables down the FCG
 Complete merge from joern_notes.scala into README.md

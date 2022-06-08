@@ -16,6 +16,9 @@ run.ossdataflow
 // Save the CPG:
 save
 
+// Get all flows to a "system" sink
+cpg.call.name("system").argument.order(1).reachableByFlows(cpg.parameter).p 
+
 // Find paths from a "gets" source to a "system" sink
 // With more recent versions of Joern, we must specify exactly which arguments
 // we want data flow for:
@@ -204,14 +207,13 @@ var sources:Map[String,List[Int]] = Map()
 sources += ("gets" -> List(1))
 sources += ("fgets" -> List(1))
 sources += ("recv" -> List(2))  
-/* 
 sources += ("recvfrom" -> List(2))     
 sources += ("read" -> List(2))
 sources += ("main" -> List(1,2))
 sources += (".*fscanf" -> Range(3,10).l)
 sources += (".*_sscanf" -> Range(3,10).l)
 sources += (".*_scanf" -> Range(2,10).l)
-*/
+
 val variadicFunctions:List[String] = List("__isoc99_fscanf", ".*fscanf", "__isoc99_scanf", "scanf", "__isoc99_sscanf", "sscanf")
 val mySources = getFunctionsThatTaintParamPointers(sources, variadicFunctions)
 mySources += (("n/a", -1, "gets", 1))
@@ -261,7 +263,7 @@ def getAllReachablePaths(sources:ListBuffer[(String, Int, String, Int)], sinks:L
                 }           
             }
             else{
-                print("Checking " + caller + "(" + taintedIndex + ")->" + sink+"("+sinkIndex+")\n")
+                print("Checking " + caller + "(" + callerIndex + ")->" + sink+"("+sinkIndex+")\n")
                 def thisSrc = cpg.method.name(caller).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(caller).argument.order(callerIndex) ++ cpg.method.name(caller).caller.dedup.name(start).call.name(caller).argument.order(callerIndex)
 
                 def thisSink = cpg.method.name(sink).caller.filter(x => x.repeat(_.caller)(_.until(_.name(start))).l.length>0).call.name(sink).argument.order(sinkIndex) ++ cpg.method.name(sink).caller.dedup.name(start).call.name(sink).argument.order(sinkIndex)
